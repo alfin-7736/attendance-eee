@@ -1,0 +1,411 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EEE Attendance Web Application</title>
+
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+
+    <!-- Google Fonts: Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+
+    <!-- Basic CSS for responsive design and consistency -->
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            background-color: #f3f4f6; /* Light gray background */
+            color: #333;
+            min-height: 100vh;
+        }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb { background: #888; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #555; }
+        input[type="text"], input[type="number"], input[type="email"],
+        input[type="password"], input[type="date"], input[type="month"],
+        textarea, select {
+            appearance: none; -webkit-appearance: none; -moz-appearance: none;
+            background-color: #fff; border-color: #d1d5db; /* gray-300 */
+            color: #1f2937; /* gray-900 */
+            padding: 0.5rem 0.75rem; border-radius: 0.375rem; /* rounded-md */
+        }
+        input[type="date"]::-webkit-calendar-picker-indicator,
+        input[type="month"]::-webkit-calendar-picker-indicator {
+            filter: invert(0.5);
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: none; border-color: #3b82f6; /* blue-500 */
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.45);
+        }
+        table {
+            width: 100%; display: block; overflow-x: auto; white-space: nowrap;
+        }
+        table thead, table tbody {
+            display: table; width: 100%; table-layout: fixed;
+        }
+        table thead tr th, table tbody tr td {
+            white-space: normal;
+        }
+    </style>
+
+
+    <!-- jsPDF and jspdf-autotable for PDF generation. LOAD BEFORE your app uses them. -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
+
+
+    <!-- Firebase SDKs (Compatibility versions). LOAD BEFORE your app uses them. -->
+    <!-- These expose the global 'firebase' object -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+
+
+    <!-- React and ReactDOM CDNs. LOAD BEFORE your app uses them. -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+
+    <!-- Babel for JSX transformation. LOAD BEFORE your React components. -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+
+</head>
+<body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div> <!-- This is where your React app will be mounted -->
+
+
+    <!-- Your Entire React Application Code -->
+    <!-- This script uses type="text/babel" to allow JSX syntax -->
+    <script type="text/babel">
+        // Destructure React hooks for convenience
+        const { useState, useEffect, useCallback, useRef } = React;
+
+
+        // Your web app's Firebase configuration - **VERIFY THESE ARE YOUR ACTUAL VALUES**
+        const firebaseConfig = {
+          apiKey: "AIzaSyAMyC7H0PYXBSskODraXqvfbGeymfWMdVU", // <--- REPLACE WITH YOUR API KEY
+          authDomain: "eee-attendance.firebaseapp.com",
+          projectId: "eee-attendance",
+          storageBucket: "eee-attendance.firebasestorage.app",
+          messagingSenderId: "443864514088",
+          appId: "1:443864514088:web:9990d773c7ad3382403f1d"
+        };
+
+
+        // Use the projectId as the appId for Firestore collection paths
+        const appId = firebaseConfig.projectId;
+
+
+        // Detect if __initial_auth_token is provided (e.g., by Canvas environment)
+        const initialAuthToken = typeof window.__initial_auth_token !== 'undefined' ? window.__initial_auth_token : null;
+
+
+        // Firebase App and Service Instances (initialized globally)
+        let app;
+        let db;
+        let auth;
+
+
+        // Global initialization of Firebase services
+        try {
+            app = firebase.initializeApp(firebaseConfig);
+            db = firebase.firestore(app);
+            auth = firebase.auth(app);
+            console.log("Firebase initialized successfully with provided config.");
+        } catch (error) {
+            console.error("Firebase initialization failed:", error);
+        }
+
+
+        // Main App Component
+        function App() {
+            const [currentTab, setCurrentTab] = useState('login');
+            const [isAuthenticated, setIsAuthenticated] = useState(false);
+            const [students, setStudents] = useState([]);
+            const [teachers, setTeachers] = useState([]);
+            const [attendanceRecords, setAttendanceRecords] = useState([]);
+            const [dateStatuses, setDateStatuses] = useState([]);
+            const [subjects, setSubjects] = useState([]);
+            const [userId, setUserId] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [message, setMessage] = useState('');
+
+
+            const messageTimeoutRef = useRef(null);
+
+
+            const showMessage = useCallback((msg, type = 'info') => {
+                setMessage({ text: msg, type });
+                if (messageTimeoutRef.current) {
+                    clearTimeout(messageTimeoutRef.current);
+                }
+                messageTimeoutRef.current = setTimeout(() => {
+                    setMessage('');
+                }, 5000);
+            }, []);
+
+
+            useEffect(() => {
+                if (!auth) {
+                    showMessage("Firebase Authentication service not available.", 'error');
+                    setLoading(false);
+                    return;
+                }
+
+
+                const unsubscribe = auth.onAuthStateChanged(async (user) => {
+                    console.log("onAuthStateChanged triggered. User:", user ? user.uid : 'null');
+                    if (user) {
+                        setIsAuthenticated(true);
+                        setUserId(user.uid);
+                        if (currentTab === 'login' || currentTab === null) {
+                            setCurrentTab('studentList');
+                        }
+                    } else {
+                        setIsAuthenticated(false);
+                        setUserId(null);
+                        setCurrentTab('login');
+
+
+                        if (!initialAuthToken && loading) {
+                            try {
+                                await auth.signInAnonymously();
+                                console.log("Attempted anonymous sign-in as no user found and no initial token.");
+                            } catch (anonError) {
+                                console.error("Failed to sign in anonymously:", anonError);
+                                showMessage(`Initial authentication failed: ${anonError.message}. Please try logging in.`, 'error');
+                            }
+                        }
+                    }
+                    setLoading(false);
+                    console.log("Initial auth check complete. Loading set to false.");
+                });
+
+
+                return () => {
+                    console.log("Cleaning up onAuthStateChanged listener.");
+                    unsubscribe();
+                };
+            }, [auth, showMessage, initialAuthToken, loading, currentTab]);
+
+
+            useEffect(() => {
+                if (!db || !userId || !isAuthenticated) {
+                    console.log("Firestore DB, User ID, or Authentication not ready for data listeners. Skipping.");
+                    setStudents([]);
+                    setTeachers([]);
+                    setAttendanceRecords([]);
+                    setDateStatuses([]);
+                    setSubjects([]);
+                    return;
+                }
+
+
+                console.log("Setting up Firestore data listeners for authenticated user:", userId);
+
+
+                const studentsCollectionRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('students');
+                const unsubscribeStudents = studentsCollectionRef.onSnapshot((snapshot) => {
+                    const studentData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    studentData.sort((a, b) => a.Roll_No - b.Roll_No);
+                    setStudents(studentData);
+                    console.log("Student data updated:", studentData.length);
+                }, (error) => {
+                    console.error("Error fetching students:", error);
+                    showMessage(`Failed to load student data: ${error.message}`, 'error');
+                });
+
+
+                const teachersCollectionRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('teachers');
+                const unsubscribeTeachers = teachersCollectionRef.onSnapshot((snapshot) => {
+                    const teacherData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    teacherData.sort((a, b) => a.SI_No - b.SI_No);
+                    setTeachers(teacherData);
+                    console.log("Teacher data updated:", teacherData.length);
+                }, (error) => {
+                    console.error("Error fetching teachers:", error);
+                    showMessage(`Failed to load teacher data: ${error.message}`, 'error');
+                });
+
+
+                const attendanceCollectionRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('attendance');
+                const unsubscribeAttendance = attendanceCollectionRef.onSnapshot((snapshot) => {
+                    const attendanceData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setAttendanceRecords(attendanceData);
+                    console.log("Attendance records updated:", attendanceData.length);
+                }, (error) => {
+                    console.error("Error fetching attendance:", error);
+                    showMessage(`Failed to load attendance data: ${error.message}`, 'error');
+                });
+
+
+                const dateStatusCollectionRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('date_status');
+                const unsubscribeDateStatus = dateStatusCollectionRef.onSnapshot((snapshot) => {
+                    const dateStatusData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    dateStatusData.sort((a, b) => a.date.localeCompare(b.date));
+                    setDateStatuses(dateStatusData);
+                    console.log("Date status data updated:", dateStatusData.length);
+                }, (error) => {
+                    console.error("Error fetching date statuses:", error);
+                    showMessage(`Failed to load date statuses: ${error.message}`, 'error');
+                });
+
+
+                const subjectsCollectionRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('subjects');
+                const unsubscribeSubjects = subjectsCollectionRef.onSnapshot((snapshot) => {
+                    const subjectData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    subjectData.sort((a, b) => a.Name.localeCompare(b.Name));
+                    setSubjects(subjectData);
+                    console.log("Subject data updated:", subjectData.length);
+                }, (error) => {
+                    console.error("Error fetching subjects:", error);
+                    showMessage(`Failed to load subjects: ${error.message}`, 'error');
+                });
+
+
+                return () => {
+                    console.log("Cleaning up all Firestore data listeners.");
+                    unsubscribeStudents();
+                    unsubscribeTeachers();
+                    unsubscribeAttendance();
+                    unsubscribeDateStatus();
+                    unsubscribeSubjects();
+                };
+            }, [db, userId, isAuthenticated, showMessage, appId]);
+
+
+            const handleLogout = async () => {
+                if (!auth) {
+                    showMessage("Authentication service not available.", 'error');
+                    return;
+                }
+                try {
+                    await auth.signOut();
+                    showMessage('Logged out successfully!', 'success');
+                } catch (error) {
+                    console.error("Error logging out:", error);
+                    showMessage(`Logout failed: ${error.message}`, 'error');
+                }
+            };
+
+
+            if (loading) {
+                return (
+                    <div className="flex items-center justify-center min-h-screen bg-gray-100">
+                        <p className="text-xl text-gray-700">Loading application...</p>
+                    </div>
+                );
+            }
+
+
+            if (!isAuthenticated) {
+                return <LoginPage showMessage={showMessage} />;
+            }
+
+
+            return (
+                <div className="min-h-screen bg-gray-100 font-inter text-gray-800">
+                    <header className="bg-blue-600 p-4 shadow-md rounded-b-lg">
+                        <div className="container mx-auto flex flex-col sm:flex-row justify-between items-center">
+                            <div className="text-white text-center sm:text-left mb-2 sm:mb-0">
+                                <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight whitespace-nowrap">Government Polytechnic College, Pala</h1>
+                                <p className="text-xl sm:text-2xl font-semibold mt-1 whitespace-nowrap">Department of Electrical and Electronics Engineering</p>
+                                <p className="text-lg sm:text-xl font-medium mt-1">Attendance Register Log</p>
+                            </div>
+                            <nav className="flex flex-wrap justify-center sm:justify-start space-x-2 sm:space-x-4 mt-2 sm:mt-0">
+                                <button
+                                    onClick={() => setCurrentTab('studentList')}
+                                    className={`px-3 py-2 rounded-lg transition-colors duration-200 text-sm sm:text-base ${
+                                        currentTab === 'studentList' ? 'bg-blue-700 text-white shadow-lg' : 'text-blue-100 hover:bg-blue-500 hover:text-white'
+                                    }`}
+                                >
+                                    Student List
+                                </button>
+                                <button
+                                    onClick={() => setCurrentTab('teacherList')}
+                                    className={`px-3 py-2 rounded-lg transition-colors duration-200 text-sm sm:text-base ${
+                                        currentTab === 'teacherList' ? 'bg-blue-700 text-white shadow-lg' : 'text-blue-100 hover:bg-blue-500 hover:text-white'
+                                    }`}
+                                >
+                                    Teacher List
+                                </button>
+                                <button
+                                    onClick={() => setCurrentTab('subjectList')}
+                                    className={`px-3 py-2 rounded-lg transition-colors duration-200 text-sm sm:text-base ${
+                                        currentTab === 'subjectList' ? 'bg-blue-700 text-white shadow-lg' : 'text-blue-100 hover:bg-blue-500 hover:text-white'
+                                    }`}
+                                >
+                                    Subject List
+                                </button>
+                                <button
+                                    onClick={() => setCurrentTab('todayAttendance')}
+                                    className={`px-3 py-2 rounded-lg transition-colors duration-200 text-sm sm:text-base ${
+                                        currentTab === 'todayAttendance' ? 'bg-blue-700 text-white shadow-lg' : 'text-blue-100 hover:bg-blue-500 hover:text-white'
+                                    }`}
+                                >
+                                    Today's Attendance
+                                </button>
+                                <button
+                                    onClick={() => setCurrentTab('monthlyReport')}
+                                    className={`px-3 py-2 rounded-lg transition-colors duration-200 text-sm sm:text-base ${
+                                        currentTab === 'monthlyReport' ? 'bg-blue-700 text-white shadow-lg' : 'text-blue-100 hover:bg-blue-500 hover:text-white'
+                                    }`}
+                                >
+                                    Monthly Report
+                                </button>
+                                <button
+                                    onClick={() => setCurrentTab('dateManagement')}
+                                    className={`px-3 py-2 rounded-lg transition-colors duration-200 text-sm sm:text-base ${
+                                        currentTab === 'dateManagement' ? 'bg-blue-700 text-white shadow-lg' : 'text-blue-100 hover:bg-blue-500 hover:text-white'
+                                    }`}
+                                >
+                                    Manage Dates
+                                </button>
+                            </nav>
+                            <button
+                                onClick={handleLogout}
+                                className="mt-4 sm:mt-0 px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors duration-200 shadow-md"
+                            >
+                                Logout
+                            </button>
+                        </div>
+                    </header>
+
+
+                    <div className="container mx-auto p-4 text-sm text-gray-600 text-right">
+                        User ID: <span className="font-mono bg-gray-200 p-1 rounded">{userId || 'N/A'}</span>
+                    </div>
+
+
+                    {message && (
+                        <div className={`container mx-auto mt-4 p-3 rounded-lg shadow-md text-center ${
+                            message.type === 'error' ? 'bg-red-100 text-red-700 border border-red-400' :
+                            message.type === 'success' ? 'bg-green-100 text-green-700 border border-green-400' :
+                            'bg-blue-100 text-blue-700 border border-blue-400'
+                        }`}>
+                            {message.text}
+                        </div>
+                    )}
+
+
+                    <main className="container mx-auto p-6 bg-white rounded-lg shadow-xl mt-6">
+                        {currentTab === 'studentList' && (
+                            <StudentListTab
+                                students={students}
+                                db={db}
+                                userId={userId}
+                                showMessage={showMessage}
+                            />
+                        )}
+                        {currentTab === 'teacherList' && (
+                            <TeacherListTab
